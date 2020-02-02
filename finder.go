@@ -11,9 +11,13 @@ type sliceFinder struct {
 	sl []string
 }
 
-func newSliceFinder() finder {
+func newSliceFinder(initElems []string) finder {
+	var (
+		sl = make([]string, len(initElems))
+	)
+	copy(sl, initElems)
 	return &sliceFinder{
-		sl: []string{},
+		sl: sl,
 	}
 }
 
@@ -34,9 +38,15 @@ type mapFinder struct {
 	m map[string]struct{}
 }
 
-func newMapFinder() finder {
+func newMapFinder(initElems []string) finder {
+	var (
+		m = make(map[string]struct{}, len(initElems))
+	)
+	for _, elem := range initElems {
+		m[elem] = struct{}{}
+	}
 	return &mapFinder{
-		m: map[string]struct{}{},
+		m: m,
 	}
 }
 
@@ -47,4 +57,16 @@ func (f *mapFinder) add(s string) {
 func (f *mapFinder) contains(s string) bool {
 	_, ok := f.m[s]
 	return ok
+}
+
+func dedupe(in []string, f finder) []string {
+	deduped := []string{}
+	for _, s := range in {
+		if f.contains(s) {
+			continue
+		}
+		deduped = append(deduped, s)
+		f.add(s)
+	}
+	return deduped
 }

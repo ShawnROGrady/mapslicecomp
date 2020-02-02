@@ -2,22 +2,17 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
 )
 
-/*
-var allFinders = map[string]func() finder{
-	"slice_finder": newSliceFinder,
-	"map_finder":   newMapFinder,
-}
-*/
-
 var allFinders = []struct {
 	name  string
-	newFn func() finder
+	newFn func([]string) finder
 }{
 	{
 		name:  "slice_finder",
@@ -40,15 +35,20 @@ func TestFinderContains(t *testing.T) {
 			for _, numElems := range numElems {
 				t.Run(fmt.Sprintf("num_elems=%d", numElems), func(t *testing.T) {
 					for _, hitRate := range hitRates {
-						var (
-							f               = finderInfo.newFn()
-							addSet, testSet = generateElems(numElems, hitRate)
-						)
-						for _, elem := range addSet {
-							f.add(elem)
-						}
-
 						t.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(t *testing.T) {
+							numDifferent := float64(numElems) * (1 - hitRate)
+							if math.Mod(numDifferent, 1) != 0 {
+								t.Skip("skipping due to non-whole num_elems*hit_rate")
+							}
+
+							var (
+								f               = finderInfo.newFn([]string{})
+								addSet, testSet = generateElems(numElems, hitRate)
+							)
+							for _, elem := range addSet {
+								f.add(elem)
+							}
+
 							testFinderContains(t, f, testSet, hitRate)
 						})
 					}
@@ -75,53 +75,19 @@ func testFinderContains(t *testing.T, f finder, elems []string, expectedHitRate 
 	}
 }
 
-var res bool
-
-func BenchmarkFinderContains(b *testing.B) {
-	type sets struct {
-		addSet  []string
-		testSet []string
-	}
-
+func TestDedupe(t *testing.T) {
 	var (
-		numElems      = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
-		hitRates      = []float64{1.0, 0.5, 0.25, 0}
-		generatedSets = map[int]map[float64]sets{} // used to ensure each implementation gets the same set
+		numElems       = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		duplicateRates = []float64{0.8, 0.6, 0.4, 0.2, 0.0}
 	)
 
-	// helper to make sure sets remain the same
-	getSets := func(numElems int, hitRate float64) ([]string, []string) {
-		if numElemSets, ok := generatedSets[numElems]; ok {
-			if hitRateSets, ok := numElemSets[hitRate]; ok {
-				return hitRateSets.addSet, hitRateSets.testSet
-			}
-		} else {
-			generatedSets[numElems] = map[float64]sets{}
-		}
-
-		addSet, testSet := generateElems(numElems, hitRate)
-		generatedSets[numElems][hitRate] = sets{addSet: addSet, testSet: testSet}
-		return addSet, testSet
-	}
-
 	for _, finderInfo := range allFinders {
-		b.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(b *testing.B) {
+		t.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(t *testing.T) {
 			for _, numElems := range numElems {
-				b.Run(fmt.Sprintf("num_elems=%d", numElems), func(b *testing.B) {
-					for _, hitRate := range hitRates {
-						var (
-							addSet, testSet = getSets(numElems, hitRate)
-						)
-
-						f := finderInfo.newFn()
-
-						for _, elem := range addSet {
-							f.add(elem)
-						}
-
-						b.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(b *testing.B) {
-							b.ResetTimer()
-							benchmarkFinderContains(b, f, testSet)
+				t.Run(fmt.Sprintf("num_elems=%d", numElems), func(t *testing.T) {
+					for _, dupRate := range duplicateRates {
+						t.Run(fmt.Sprintf("dup_rate=%.2f", dupRate), func(t *testing.T) {
+							testDedupe(t, finderInfo.newFn, numElems, dupRate)
 						})
 					}
 				})
@@ -130,11 +96,71 @@ func BenchmarkFinderContains(b *testing.B) {
 	}
 }
 
-func benchmarkFinderContains(b *testing.B, f finder, elems []string) {
+func testDedupe(t *testing.T, newFinderFn func([]string) finder, numElems int, dupRate float64) {
+	var (
+		inElems = generateElemsWithDups(numElems, dupRate)
+		f       = newFinderFn([]string{})
+
+		numDups        = int(float64(numElems) * dupRate)
+		expectedUnique = numElems - numDups
+	)
+
+	deduped := dedupe(inElems, f)
+	if len(deduped) != expectedUnique {
+		t.Errorf("unexpected number of de-deduped elements (expected = %d, actual = %d)", expectedUnique, len(deduped))
+	}
+
+	// sort to verify uniqueness
+	sort.Strings(deduped)
+
+	for i, elem := range deduped {
+		if i == 0 {
+			continue
+		}
+
+		if elem == deduped[i-1] {
+			t.Errorf("unexpected duplicate element found: %s", elem)
+		}
+	}
+}
+
+var res bool
+
+func BenchmarkFinderContains(b *testing.B) {
+	var (
+		numElems = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		hitRates = []float64{1.0, 0.5, 0.25, 0.2, 0}
+	)
+
+	for _, finderInfo := range allFinders {
+		b.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(b *testing.B) {
+			for _, numElems := range numElems {
+				b.Run(fmt.Sprintf("num_elems=%d", numElems), func(b *testing.B) {
+					for _, hitRate := range hitRates {
+						b.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(b *testing.B) {
+							numDifferent := float64(numElems) * (1 - hitRate)
+							if math.Mod(numDifferent, 1) != 0 {
+								b.Skip("skipping due to non-whole num_elems*hit_rate")
+							}
+							benchmarkFinderContains(b, finderInfo.newFn, numElems, hitRate)
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, numElems int, hitRate float64) {
 	b.Helper()
 	found := false
 	for n := 0; n < b.N; n++ {
-		for _, elem := range elems {
+		b.StopTimer()
+		addSet, testSet := generateElems(numElems, hitRate)
+		f := newFinderFn(addSet)
+		b.StartTimer()
+
+		for _, elem := range testSet {
 			found = f.contains(elem)
 		}
 	}
@@ -143,17 +169,11 @@ func benchmarkFinderContains(b *testing.B, f finder, elems []string) {
 
 func generateElems(numElems int, hitRate float64) ([]string, []string) {
 	var (
-		addSet     = make([]string, numElems)
-		testSetLen int
-		r          = rand.New(rand.NewSource(time.Now().UnixNano()))
+		addSet       = make([]string, numElems)
+		testSet      = make([]string, numElems)
+		r            = rand.New(rand.NewSource(time.Now().UnixNano()))
+		numDifferent = int(float64(numElems) * (1 - hitRate))
 	)
-
-	if hitRate == 0 || hitRate == 1.0 {
-		testSetLen = numElems
-	} else {
-		testSetLen = numElems * int(1/hitRate)
-	}
-	testSet := make([]string, testSetLen)
 
 	for i := 0; i < numElems; i++ {
 		addSet[i] = strconv.Itoa(i)
@@ -168,8 +188,9 @@ func generateElems(numElems int, hitRate float64) ([]string, []string) {
 		}
 	default:
 		copy(testSet, addSet)
-		for i := numElems; i < testSetLen; i++ {
-			testSet[i] = strconv.Itoa(i)
+		toChange := r.Perm(numElems)[:numDifferent]
+		for i, diffI := range toChange {
+			testSet[diffI] = strconv.Itoa(i + numElems)
 		}
 	}
 
@@ -181,4 +202,70 @@ func generateElems(numElems int, hitRate float64) ([]string, []string) {
 	})
 
 	return addSet, testSet
+}
+
+var dedupeRes []string
+
+func BenchmarkDedupe(b *testing.B) {
+	var (
+		numElems       = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		duplicateRates = []float64{0.8, 0.6, 0.4, 0.2, 0.0}
+	)
+
+	for _, finderInfo := range allFinders {
+		b.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(b *testing.B) {
+			for _, numElems := range numElems {
+				b.Run(fmt.Sprintf("num_elems=%d", numElems), func(b *testing.B) {
+					for _, dupRate := range duplicateRates {
+						b.Run(fmt.Sprintf("dup_rate=%.2f", dupRate), func(b *testing.B) {
+							benchmarkDedupe(b, finderInfo.newFn, numElems, dupRate)
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func benchmarkDedupe(b *testing.B, newFinderFn func([]string) finder, numElems int, dupRate float64) {
+	b.Helper()
+	deduped := []string{}
+	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		f := newFinderFn([]string{})
+		elems := generateElemsWithDups(numElems, dupRate)
+		b.StartTimer()
+
+		deduped = dedupe(elems, f)
+	}
+	dedupeRes = deduped
+}
+
+func generateElemsWithDups(numElems int, dupRate float64) []string {
+	var (
+		numDups   = int(float64(numElems) * dupRate)
+		numUnique = numElems - numDups
+		elems     = make([]string, numElems)
+		r         = rand.New(rand.NewSource(time.Now().UnixNano()))
+	)
+
+	if numUnique <= 0 {
+		panic(fmt.Sprintf("numUnique = %d with numElems = %d, dupRate = %.2f", numUnique, numElems, dupRate))
+	}
+
+	// unique elements
+	for i := 0; i < numUnique; i++ {
+		elems[i] = strconv.Itoa(i)
+	}
+
+	// duplicate elements
+	for i := numUnique; i < numElems; i++ {
+		elems[i] = strconv.Itoa(r.Intn(numUnique))
+	}
+
+	r.Shuffle(len(elems), func(i, j int) {
+		elems[i], elems[j] = elems[j], elems[i]
+	})
+
+	return elems
 }
