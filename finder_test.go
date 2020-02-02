@@ -26,14 +26,22 @@ var allFinders = []struct {
 
 func TestFinderContains(t *testing.T) {
 	var (
-		numElems = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		numElems = []int{1, 2, 4, 5, 10, 20, 50, 100, 200, 500, 1000}
 		hitRates = []float64{1.0, 0.5, 0.25, 0}
+		maxLen   = 1000
 	)
+
+	if testing.Short() {
+		maxLen = 100
+	}
 
 	for _, finderInfo := range allFinders {
 		t.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(t *testing.T) {
 			for _, numElems := range numElems {
 				t.Run(fmt.Sprintf("num_elems=%d", numElems), func(t *testing.T) {
+					if testing.Short() && numElems > maxLen {
+						t.Skip("skipping long test")
+					}
 					for _, hitRate := range hitRates {
 						t.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(t *testing.T) {
 							numDifferent := float64(numElems) * (1 - hitRate)
@@ -43,7 +51,7 @@ func TestFinderContains(t *testing.T) {
 
 							var (
 								f               = finderInfo.newFn([]string{})
-								addSet, testSet = generateElems(numElems, hitRate)
+								addSet, testSet = generateElems(numElems, maxLen, hitRate)
 							)
 							for _, elem := range addSet {
 								f.add(elem)
@@ -131,21 +139,29 @@ var res bool
 
 func BenchmarkFinderContains(b *testing.B) {
 	var (
-		numElems = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		numElems = []int{1, 2, 4, 5, 10, 20, 50, 100, 200, 500, 1000}
 		hitRates = []float64{1.0, 0.5, 0.25, 0.2, 0}
+		maxLen   = 1000
 	)
+
+	if testing.Short() {
+		maxLen = 100
+	}
 
 	for _, finderInfo := range allFinders {
 		b.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(b *testing.B) {
 			for _, numElems := range numElems {
 				b.Run(fmt.Sprintf("num_elems=%d", numElems), func(b *testing.B) {
+					if testing.Short() && numElems > maxLen {
+						b.Skip("skipping long benchmark")
+					}
 					for _, hitRate := range hitRates {
 						b.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(b *testing.B) {
 							numDifferent := float64(numElems) * (1 - hitRate)
 							if math.Mod(numDifferent, 1) != 0 {
 								b.Skip("skipping due to non-whole num_elems*hit_rate")
 							}
-							benchmarkFinderContains(b, finderInfo.newFn, numElems, hitRate)
+							benchmarkFinderContains(b, finderInfo.newFn, numElems, maxLen, hitRate)
 						})
 					}
 				})
@@ -154,12 +170,12 @@ func BenchmarkFinderContains(b *testing.B) {
 	}
 }
 
-func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, numElems int, hitRate float64) {
+func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, numElems, maxLen int, hitRate float64) {
 	b.Helper()
 	found := false
 	for n := 0; n < b.N; n++ {
 		b.StopTimer()
-		addSet, testSet := generateElems(numElems, hitRate)
+		addSet, testSet := generateElems(numElems, maxLen, hitRate)
 		f := newFinderFn(addSet)
 		b.StartTimer()
 
@@ -170,10 +186,11 @@ func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, nu
 	res = found
 }
 
-func generateElems(numElems int, hitRate float64) ([]string, []string) {
+func generateElems(numElems, testSetLen int, hitRate float64) ([]string, []string) {
 	var (
 		addSet       = make([]string, numElems)
-		testSet      = make([]string, numElems)
+		testElems    = make([]string, numElems)
+		testSet      = make([]string, testSetLen)
 		r            = rand.New(rand.NewSource(time.Now().UnixNano()))
 		numDifferent = int(float64(numElems) * (1 - hitRate))
 	)
@@ -184,17 +201,22 @@ func generateElems(numElems int, hitRate float64) ([]string, []string) {
 
 	switch hitRate {
 	case 1:
-		copy(testSet, addSet)
+		copy(testElems, addSet)
 	case 0:
 		for i := 0; i < numElems; i++ {
-			testSet[i] = strconv.Itoa(i + numElems)
+			testElems[i] = strconv.Itoa(i + numElems)
 		}
 	default:
-		copy(testSet, addSet)
+		copy(testElems, addSet)
 		toChange := r.Perm(numElems)[:numDifferent]
 		for i, diffI := range toChange {
-			testSet[diffI] = strconv.Itoa(i + numElems)
+			testElems[diffI] = strconv.Itoa(i + numElems)
 		}
+	}
+
+	// bring testSet up to proper len
+	for i := 0; i < testSetLen; i += numElems {
+		copy(testSet[i:], testElems)
 	}
 
 	r.Shuffle(len(addSet), func(i, j int) {
