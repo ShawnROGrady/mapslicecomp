@@ -98,12 +98,15 @@ func TestDedupe(t *testing.T) {
 
 func testDedupe(t *testing.T, newFinderFn func([]string) finder, numElems int, dupRate float64) {
 	var (
-		inElems = generateElemsWithDups(numElems, dupRate)
-		f       = newFinderFn([]string{})
-
+		f              = newFinderFn([]string{})
 		numDups        = int(float64(numElems) * dupRate)
 		expectedUnique = numElems - numDups
 	)
+
+	inElems, err := generateElemsWithDups(numElems, dupRate)
+	if err != nil {
+		t.Fatalf("unexpected error generating test elements: %s", err)
+	}
 
 	deduped := dedupe(inElems, f)
 	if len(deduped) != expectedUnique {
@@ -233,7 +236,10 @@ func benchmarkDedupe(b *testing.B, newFinderFn func([]string) finder, numElems i
 	for n := 0; n < b.N; n++ {
 		b.StopTimer()
 		f := newFinderFn([]string{})
-		elems := generateElemsWithDups(numElems, dupRate)
+		elems, err := generateElemsWithDups(numElems, dupRate)
+		if err != nil {
+			b.Fatalf("unexpected error generating test elems: %s", err)
+		}
 		b.StartTimer()
 
 		deduped = dedupe(elems, f)
@@ -241,7 +247,7 @@ func benchmarkDedupe(b *testing.B, newFinderFn func([]string) finder, numElems i
 	dedupeRes = deduped
 }
 
-func generateElemsWithDups(numElems int, dupRate float64) []string {
+func generateElemsWithDups(numElems int, dupRate float64) ([]string, error) {
 	var (
 		numDups   = int(float64(numElems) * dupRate)
 		numUnique = numElems - numDups
@@ -250,7 +256,7 @@ func generateElemsWithDups(numElems int, dupRate float64) []string {
 	)
 
 	if numUnique <= 0 {
-		panic(fmt.Sprintf("numUnique = %d with numElems = %d, dupRate = %.2f", numUnique, numElems, dupRate))
+		return elems, fmt.Errorf("numUnique = %d with numElems = %d, dupRate = %.2f", numUnique, numElems, dupRate)
 	}
 
 	// unique elements
@@ -267,5 +273,5 @@ func generateElemsWithDups(numElems int, dupRate float64) []string {
 		elems[i], elems[j] = elems[j], elems[i]
 	})
 
-	return elems
+	return elems, nil
 }
