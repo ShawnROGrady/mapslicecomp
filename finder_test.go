@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,7 +52,7 @@ func TestFinderContains(t *testing.T) {
 
 							var (
 								f               = finderInfo.newFn([]string{})
-								addSet, testSet = generateElems(numElems, maxLen, hitRate)
+								addSet, testSet = generateElems(numElems, maxLen, 1, hitRate)
 							)
 							for _, elem := range addSet {
 								f.add(elem)
@@ -141,6 +142,7 @@ func BenchmarkFinderContains(b *testing.B) {
 	var (
 		numElems = []int{1, 2, 4, 5, 10, 20, 50, 100, 200, 500, 1000}
 		hitRates = []float64{1.0, 0.5, 0.25, 0.2, 0}
+		strLens  = []int{1, 2, 5, 10, 20, 30, 50, 100}
 		maxLen   = 1000
 	)
 
@@ -157,11 +159,15 @@ func BenchmarkFinderContains(b *testing.B) {
 					}
 					for _, hitRate := range hitRates {
 						b.Run(fmt.Sprintf("hit_rate=%.2f", hitRate), func(b *testing.B) {
-							numDifferent := float64(numElems) * (1 - hitRate)
-							if math.Mod(numDifferent, 1) != 0 {
-								b.Skip("skipping due to non-whole num_elems*hit_rate")
+							for _, strLen := range strLens {
+								b.Run(fmt.Sprintf("str_len=%d", strLen), func(b *testing.B) {
+									numDifferent := float64(numElems) * (1 - hitRate)
+									if math.Mod(numDifferent, 1) != 0 {
+										b.Skip("skipping due to non-whole num_elems*hit_rate")
+									}
+									benchmarkFinderContains(b, finderInfo.newFn, numElems, maxLen, strLen, hitRate)
+								})
 							}
-							benchmarkFinderContains(b, finderInfo.newFn, numElems, maxLen, hitRate)
 						})
 					}
 				})
@@ -170,12 +176,12 @@ func BenchmarkFinderContains(b *testing.B) {
 	}
 }
 
-func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, numElems, maxLen int, hitRate float64) {
+func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, numElems, maxLen, strLen int, hitRate float64) {
 	b.Helper()
 	found := false
 	for n := 0; n < b.N; n++ {
 		b.StopTimer()
-		addSet, testSet := generateElems(numElems, maxLen, hitRate)
+		addSet, testSet := generateElems(numElems, maxLen, strLen, hitRate)
 		f := newFinderFn(addSet)
 		b.StartTimer()
 
@@ -186,7 +192,7 @@ func benchmarkFinderContains(b *testing.B, newFinderFn func([]string) finder, nu
 	res = found
 }
 
-func generateElems(numElems, testSetLen int, hitRate float64) ([]string, []string) {
+func generateElems(numElems, testSetLen, strLen int, hitRate float64) ([]string, []string) {
 	var (
 		addSet       = make([]string, numElems)
 		testElems    = make([]string, numElems)
@@ -196,7 +202,7 @@ func generateElems(numElems, testSetLen int, hitRate float64) ([]string, []strin
 	)
 
 	for i := 0; i < numElems; i++ {
-		addSet[i] = strconv.Itoa(i)
+		addSet[i] = strings.Repeat(strconv.Itoa(i), strLen)
 	}
 
 	switch hitRate {
@@ -204,13 +210,13 @@ func generateElems(numElems, testSetLen int, hitRate float64) ([]string, []strin
 		copy(testElems, addSet)
 	case 0:
 		for i := 0; i < numElems; i++ {
-			testElems[i] = strconv.Itoa(i + numElems)
+			testElems[i] = strings.Repeat(strconv.Itoa(i+numElems), strLen)
 		}
 	default:
 		copy(testElems, addSet)
 		toChange := r.Perm(numElems)[:numDifferent]
 		for i, diffI := range toChange {
-			testElems[diffI] = strconv.Itoa(i + numElems)
+			testElems[diffI] = strings.Repeat(strconv.Itoa(i+numElems), strLen)
 		}
 	}
 
