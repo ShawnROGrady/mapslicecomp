@@ -239,16 +239,30 @@ var dedupeRes []string
 
 func BenchmarkDedupe(b *testing.B) {
 	var (
-		numElems       = []int{1, 5, 10, 20, 50, 100, 200, 500, 1000}
+		numElems       = []int{1, 2, 3, 4, 5, 10, 20, 50, 100, 200, 500, 1000}
+		maxLen         = 1000
 		duplicateRates = []float64{0.8, 0.6, 0.4, 0.2, 0.0}
 	)
+
+	if testing.Short() {
+		maxLen = 100
+	}
 
 	for _, finderInfo := range allFinders {
 		b.Run(fmt.Sprintf("finder=%s", finderInfo.name), func(b *testing.B) {
 			for _, numElems := range numElems {
 				b.Run(fmt.Sprintf("num_elems=%d", numElems), func(b *testing.B) {
+					if testing.Short() && numElems > maxLen {
+						b.Skip("skipping long benchmark")
+					}
 					for _, dupRate := range duplicateRates {
 						b.Run(fmt.Sprintf("dup_rate=%.2f", dupRate), func(b *testing.B) {
+							var (
+								numDups = float64(numElems) * dupRate
+							)
+							if math.Mod(numDups, 1) != 0 {
+								b.Skip("skipping due to non-whole num_elems*dup_rate")
+							}
 							benchmarkDedupe(b, finderInfo.newFn, numElems, dupRate)
 						})
 					}
